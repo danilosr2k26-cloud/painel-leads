@@ -12,6 +12,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const nodemailer = require("nodemailer");
 
 /* ---------- carrega variáveis do arquivo .env (sem dependência) ---------- */
 (function carregarEnv() {
@@ -35,6 +36,49 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(16).toString("hex");
 const ORIGENS = (process.env.ALLOWED_ORIGINS || "*").split(",").map((s) => s.trim());
 
+/* ---------- E-mail (backup de cada lead) ---------- */
+const SMTP_HOST = process.env.SMTP_HOST || "";
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER || "";
+const SMTP_PASS = process.env.SMTP_PASS || "";
+const LEAD_EMAIL_TO = process.env.LEAD_EMAIL_TO || SMTP_USER;   // para onde chega o lead
+const LEAD_EMAIL_FROM = process.env.LEAD_EMAIL_FROM || SMTP_USER; // remetente
+
+let transporter = null;
+if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
+  transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_PORT === 465,       // 465 = SSL; 587 = STARTTLS
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+  });
+  console.log("  E-mail: envio de leads ATIVO (SMTP " + SMTP_HOST + ")");
+} else {
+  console.log("  E-mail: NÃO configurado (defina SMTP_* no .env para receber leads por e-mail)");
+}
+
+/* Envia um e-mail com os dados do lead. Não trava o cadastro se falhar. */
+async function enviarEmailLead(lead) {
+  if (!transporter) return;
+  const d = lead.dados || {};
+  const linhas = Object.keys(d).map((k) => `• ${k}: ${d[k]}`).join("\n");
+  const emailLead = Object.keys(d).find((k) => /mail/i.test(k)) ? d[Object.keys(d).find((k) => /mail/i.test(k))] : "";
+  try {
+    await transporter.sendMail({
+      from: `"Novo Lead" <${LEAD_EMAIL_FROM}>`,
+      to: LEAD_EMAIL_TO,
+      replyTo: emailLead || undefined,
+      subject: "Novo lead recebido" + (lead.origem ? " — " + lead.origem : ""),
+      text:
+        "Você recebeu um novo lead:\n\n" + linhas +
+        "\n\nRecebido em: " + new Date(lead.criadoEm).toLocaleString("pt-BR") +
+        "\nOrigem: " + (lead.origem || "-"),
+    });
+  } catch (e) {
+    console.error("Falha ao enviar e-mail do lead:", e.message);
+  }
+}
+
 if (!ADMIN_PASSWORD) {
   console.error("\n[ERRO] Defina ADMIN_PASSWORD no arquivo .env antes de iniciar.");
   console.error("       Copie .env.example para .env e escolha uma senha.\n");
@@ -51,25 +95,90 @@ const corsLeads = cors({
 });
 
 /* =========================================================================
-   Armazenamento em arquivo JSON (fila de escrita para evitar corrida)
+   ARMAZENAMENTO
+   - Se SUPABASE_URL + SUPABASE_SERVICE_KEY estiverem definidos -> usa Supabase
+     (Postgres permanente).
+   - Senão -> usa o arquivo data/leads.json (bom para rodar local).
    ========================================================================= */
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
+const TABELA = process.env.SUPABASE_TABLE || "leads";
+
+let supabase = null;
+if (SUPABASE_URL && SUPABASE_KEY) {
+  const { createClient } = require("@supabase/supabase-js");
+  supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
+  console.log("  Armazenamento: SUPABASE (permanente)");
+} else {
+  console.log("  Armazenamento: arquivo local data/leads.json (temporário)");
+}
+
+/* ---- reserva em arquivo (usada quando não há Supabase) ---- */
 const PASTA_DADOS = path.join(__dirname, "data");
 const ARQUIVO = path.join(PASTA_DADOS, "leads.json");
 let filaEscrita = Promise.resolve();
-
-// garante que a pasta data/ exista (mesmo que não venha no repositório)
 try { fs.mkdirSync(PASTA_DADOS, { recursive: true }); } catch (e) { console.error(e); }
-
-function lerLeads() {
-  try { return JSON.parse(fs.readFileSync(ARQUIVO, "utf8")); }
-  catch (e) { return []; }
+function lerArquivo() {
+  try { return JSON.parse(fs.readFileSync(ARQUIVO, "utf8")); } catch (e) { return []; }
 }
-function salvarLeads(lista) {
+function salvarArquivo(lista) {
   filaEscrita = filaEscrita.then(() => {
     fs.mkdirSync(PASTA_DADOS, { recursive: true });
     return fs.promises.writeFile(ARQUIVO, JSON.stringify(lista, null, 2));
   });
   return filaEscrita;
+}
+
+/* ---- converte uma linha do banco para o formato usado pelo painel ---- */
+function mapLinha(r) {
+  return { id: r.id, criadoEm: r.criado_em, status: r.status, nota: r.nota || "", origem: r.origem || "", ip: r.ip || "", dados: r.dados || {} };
+}
+
+/* ---- camada de dados (funciona igual com Supabase ou arquivo) ---- */
+async function inserirLead(lead) {
+  if (supabase) {
+    const { error } = await supabase.from(TABELA).insert({
+      id: lead.id, criado_em: lead.criadoEm, status: lead.status,
+      nota: lead.nota, origem: lead.origem, ip: lead.ip, dados: lead.dados,
+    });
+    if (error) throw new Error(error.message);
+  } else {
+    const lista = lerArquivo(); lista.unshift(lead); await salvarArquivo(lista);
+  }
+}
+async function listarLeads() {
+  if (supabase) {
+    const { data, error } = await supabase.from(TABELA).select("*").order("criado_em", { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data || []).map(mapLinha);
+  }
+  return lerArquivo();
+}
+async function atualizarLead(id, campos) {
+  if (supabase) {
+    const { data, error } = await supabase.from(TABELA).update(campos).eq("id", id).select();
+    if (error) throw new Error(error.message);
+    return data && data[0] ? mapLinha(data[0]) : null;
+  }
+  const lista = lerArquivo();
+  const lead = lista.find((l) => l.id === id);
+  if (!lead) return null;
+  Object.assign(lead, campos);
+  await salvarArquivo(lista);
+  return lead;
+}
+async function excluirLead(id) {
+  if (supabase) {
+    const { error } = await supabase.from(TABELA).delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    return true;
+  }
+  const lista = lerArquivo();
+  const antes = lista.length;
+  const nova = lista.filter((l) => l.id !== id);
+  if (nova.length === antes) return false;
+  await salvarArquivo(nova);
+  return true;
 }
 
 /* =========================================================================
@@ -144,9 +253,11 @@ app.post("/api/leads", corsLeads, limitar, async (req, res) => {
       dados: campos,
     };
 
-    const lista = lerLeads();
-    lista.unshift(lead);
-    await salvarLeads(lista);
+    await inserirLead(lead);
+
+    // backup por e-mail (em segundo plano; não atrasa a resposta ao formulário)
+    enviarEmailLead(lead);
+
     res.json({ ok: true });
   } catch (e) {
     console.error("Erro ao salvar lead:", e);
@@ -167,22 +278,27 @@ app.post("/api/login", (req, res) => {
 });
 
 /* Lista de leads com filtros */
-app.get("/api/leads", exigirLogin, (req, res) => {
-  const { status, q, from, to } = req.query;
-  let lista = lerLeads();
-  if (status && status !== "todos") lista = lista.filter((l) => l.status === status);
-  if (from) lista = lista.filter((l) => l.criadoEm >= from);
-  if (to) lista = lista.filter((l) => l.criadoEm <= to + "T23:59:59");
-  if (q) {
-    const t = String(q).toLowerCase();
-    lista = lista.filter((l) => JSON.stringify(l.dados).toLowerCase().includes(t));
+app.get("/api/leads", exigirLogin, async (req, res) => {
+  try {
+    const { status, q, from, to } = req.query;
+    let lista = await listarLeads();
+    if (status && status !== "todos") lista = lista.filter((l) => l.status === status);
+    if (from) lista = lista.filter((l) => l.criadoEm >= from);
+    if (to) lista = lista.filter((l) => l.criadoEm <= to + "T23:59:59");
+    if (q) {
+      const t = String(q).toLowerCase();
+      lista = lista.filter((l) => JSON.stringify(l.dados).toLowerCase().includes(t));
+    }
+    res.json({ ok: true, total: lista.length, leads: lista });
+  } catch (e) {
+    console.error("Erro ao listar:", e); res.status(500).json({ ok: false, erro: "Erro ao listar" });
   }
-  res.json({ ok: true, total: lista.length, leads: lista });
 });
 
 /* Estatísticas para os KPIs e o gráfico */
-app.get("/api/stats", exigirLogin, (req, res) => {
-  const lista = lerLeads();
+app.get("/api/stats", exigirLogin, async (req, res) => {
+  try {
+  const lista = await listarLeads();
   const hoje = new Date().toISOString().slice(0, 10);
   const porDia = {};
   for (let i = 13; i >= 0; i--) {
@@ -198,32 +314,39 @@ app.get("/api/stats", exigirLogin, (req, res) => {
     hoje: lista.filter((l) => l.criadoEm.slice(0, 10) === hoje).length,
     porDia: Object.entries(porDia).map(([dia, n]) => ({ dia, n })),
   });
+  } catch (e) {
+    console.error("Erro no stats:", e); res.status(500).json({ ok: false, erro: "Erro" });
+  }
 });
 
 /* Atualiza status/nota */
 app.patch("/api/leads/:id", exigirLogin, async (req, res) => {
-  const lista = lerLeads();
-  const lead = lista.find((l) => l.id === req.params.id);
-  if (!lead) return res.status(404).json({ ok: false, erro: "Lead não encontrado" });
-  if (typeof req.body.status === "string") lead.status = req.body.status;
-  if (typeof req.body.nota === "string") lead.nota = req.body.nota;
-  await salvarLeads(lista);
-  res.json({ ok: true, lead });
+  try {
+    const campos = {};
+    if (typeof req.body.status === "string") campos.status = req.body.status;
+    if (typeof req.body.nota === "string") campos.nota = req.body.nota;
+    const lead = await atualizarLead(req.params.id, campos);
+    if (!lead) return res.status(404).json({ ok: false, erro: "Lead não encontrado" });
+    res.json({ ok: true, lead });
+  } catch (e) {
+    console.error("Erro ao atualizar:", e); res.status(500).json({ ok: false, erro: "Erro ao atualizar" });
+  }
 });
 
 /* Exclui um lead */
 app.delete("/api/leads/:id", exigirLogin, async (req, res) => {
-  let lista = lerLeads();
-  const antes = lista.length;
-  lista = lista.filter((l) => l.id !== req.params.id);
-  if (lista.length === antes) return res.status(404).json({ ok: false, erro: "Lead não encontrado" });
-  await salvarLeads(lista);
-  res.json({ ok: true });
+  try {
+    const ok = await excluirLead(req.params.id);
+    if (!ok) return res.status(404).json({ ok: false, erro: "Lead não encontrado" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("Erro ao excluir:", e); res.status(500).json({ ok: false, erro: "Erro ao excluir" });
+  }
 });
 
 /* Exporta CSV */
-app.get("/api/export", exigirLogin, (req, res) => {
-  const lista = lerLeads();
+app.get("/api/export", exigirLogin, async (req, res) => {
+  const lista = await listarLeads();
   const colunas = new Set(["criadoEm", "status", "origem"]);
   lista.forEach((l) => Object.keys(l.dados).forEach((k) => colunas.add(k)));
   const cols = [...colunas];
