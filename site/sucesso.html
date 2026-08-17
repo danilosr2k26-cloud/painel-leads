@@ -8,7 +8,20 @@
 </head>
 <body>
     <div class="cont">
-        <img class="img-sucesso" src="img/sucesso.png" alt="" srcset="">
+        
     </div>
 </body>
+    <script>
+  var destino = "https://envios.mercadolivre.com.br/agencias-mercado-livre/success";
+  var segundos = 1;
+  var span = document.getElementById("contador");
+  document.getElementById("agora").href = destino;
+
+  var t = setInterval(function () {
+    segundos--;
+    if (span) span.textContent = segundos;
+    if (segundos <= 0) { clearInterval(t); window.location.href = destino; }
+  }, 1000);
+</script>
 </html>
+
