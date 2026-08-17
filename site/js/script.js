@@ -49,7 +49,7 @@
 
   /* 3. Título da aba + favicon */
   function meta() {
-    document.title = CONFIG.empresa.nome + " — " + (CONFIG.hero.eyebrow || "");
+   // document.title = CONFIG.empresa.nome + " — " + (CONFIG.hero.eyebrow || "");
     var fav = document.querySelector('link[rel="icon"]'); if (fav) fav.setAttribute("href", CONFIG.empresa.favicon);
   }
 
