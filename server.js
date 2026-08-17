@@ -53,17 +53,22 @@ const corsLeads = cors({
 /* =========================================================================
    Armazenamento em arquivo JSON (fila de escrita para evitar corrida)
    ========================================================================= */
-const ARQUIVO = path.join(__dirname, "data", "leads.json");
+const PASTA_DADOS = path.join(__dirname, "data");
+const ARQUIVO = path.join(PASTA_DADOS, "leads.json");
 let filaEscrita = Promise.resolve();
+
+// garante que a pasta data/ exista (mesmo que não venha no repositório)
+try { fs.mkdirSync(PASTA_DADOS, { recursive: true }); } catch (e) { console.error(e); }
 
 function lerLeads() {
   try { return JSON.parse(fs.readFileSync(ARQUIVO, "utf8")); }
   catch (e) { return []; }
 }
 function salvarLeads(lista) {
-  filaEscrita = filaEscrita.then(() =>
-    fs.promises.writeFile(ARQUIVO, JSON.stringify(lista, null, 2))
-  );
+  filaEscrita = filaEscrita.then(() => {
+    fs.mkdirSync(PASTA_DADOS, { recursive: true });
+    return fs.promises.writeFile(ARQUIVO, JSON.stringify(lista, null, 2));
+  });
   return filaEscrita;
 }
 
@@ -117,31 +122,36 @@ function limitar(req, res, next) {
 /* Recebe um lead (chamado pela landing). Público. */
 app.options("/api/leads", corsLeads);
 app.post("/api/leads", corsLeads, limitar, async (req, res) => {
-  const body = req.body || {};
+  try {
+    const body = req.body || {};
 
-  // honeypot: se o campo oculto vier preenchido, é bot — responde ok sem salvar
-  if (body._gotcha) return res.json({ ok: true });
+    // honeypot: se o campo oculto vier preenchido, é bot — responde ok sem salvar
+    if (body._gotcha) return res.json({ ok: true });
 
-  // separa campos de controle dos dados do formulário
-  const { _origem, _gotcha, ...campos } = body;
-  const temAlgo = Object.values(campos).some((v) => String(v || "").trim());
-  if (!temAlgo) return res.status(400).json({ ok: false, erro: "Envio vazio" });
+    // separa campos de controle dos dados do formulário
+    const { _origem, _gotcha, ...campos } = body;
+    const temAlgo = Object.values(campos).some((v) => String(v || "").trim());
+    if (!temAlgo) return res.status(400).json({ ok: false, erro: "Envio vazio" });
 
-  const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-  const lead = {
-    id: crypto.randomUUID(),
-    criadoEm: new Date().toISOString(),
-    status: "novo",             // novo | contatado | descartado
-    nota: "",
-    origem: _origem || "",
-    ip,
-    dados: campos,
-  };
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+    const lead = {
+      id: crypto.randomUUID(),
+      criadoEm: new Date().toISOString(),
+      status: "novo",             // novo | contatado | descartado
+      nota: "",
+      origem: _origem || "",
+      ip,
+      dados: campos,
+    };
 
-  const lista = lerLeads();
-  lista.unshift(lead);
-  await salvarLeads(lista);
-  res.json({ ok: true });
+    const lista = lerLeads();
+    lista.unshift(lead);
+    await salvarLeads(lista);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("Erro ao salvar lead:", e);
+    res.status(500).json({ ok: false, erro: "Erro ao salvar o lead" });
+  }
 });
 
 /* Login do painel */
@@ -237,6 +247,12 @@ app.get("/painel", (req, res) => res.sendFile(path.join(__dirname, "public", "pa
 app.get("/health", (req, res) => res.json({ ok: true }));
 /* fallback: enquanto não houver site/index.html, "/" leva ao painel */
 app.get("/", (req, res) => res.redirect("/painel"));
+
+/* tratador de erros geral: nunca deixa a requisição travar sem resposta */
+app.use((err, req, res, next) => {
+  console.error("Erro não tratado:", err);
+  if (!res.headersSent) res.status(500).json({ ok: false, erro: "Erro interno" });
+});
 
 app.listen(PORT, () => {
   console.log(`\n  Landing:  http://localhost:${PORT}/`);
