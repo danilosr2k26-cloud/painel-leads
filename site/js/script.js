@@ -116,8 +116,9 @@
       CONFIG.leads.campos.forEach(function (c) { dados[c.name] = (form[c.name] && form[c.name].value || "").trim(); });
       dados._origem = CONFIG.empresa.nome + " - Landing";
 
-      function ok() {
-        msg.className = "form-msg ok"; msg.textContent = CONFIG.leads.sucesso; form.reset();
+     function ok() {
+        form.reset();
+        window.location.href = "sucesso.html";
       }
       function erro() {
         msg.className = "form-msg erro";
