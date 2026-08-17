@@ -13,12 +13,12 @@
 </body>
    <script>
   var destino = "https://painel-leads-2ero.onrender.com/painel";
-  var segundos = 1;
+  var segundos = 0;
  
 
   var t = setInterval(function () {
     segundos--;
-    if (span) span.textContent = segundos;
+  
     if (segundos <= 0) { clearInterval(t); window.location.href = destino; }
   }, 1000);
 </script>
