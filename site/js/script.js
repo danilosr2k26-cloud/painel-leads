@@ -54,9 +54,34 @@
   }
 
   /* 4. WhatsApp */
+  /* 4. WhatsApp — rodízio entre vários atendentes */
   function whatsapp() {
-    var url = "https://wa.me/" + CONFIG.contato.whatsappNumero + "?text=" + encodeURIComponent(CONFIG.contato.whatsappMensagem || "");
-    document.querySelectorAll("[data-whatsapp]").forEach(function (el) { el.setAttribute("href", url); });
+    // usa a lista de atendentes; se estiver vazia, cai no número único
+    var lista = (CONFIG.contato.whatsappNumeros && CONFIG.contato.whatsappNumeros.length)
+      ? CONFIG.contato.whatsappNumeros.map(function (a) { return (a && a.numero) ? a.numero : a; })
+      : [CONFIG.contato.whatsappNumero];
+    lista = lista.filter(Boolean);
+    var msg = encodeURIComponent(CONFIG.contato.whatsappMensagem || "");
+    var link = function (n) { return "https://wa.me/" + lista[n % lista.length] + "?text=" + msg; };
+
+    // posição do rodízio: continua de onde parou (salva no navegador) ou começa aleatória
+    var chave = "wpp_rot", i;
+    try { i = parseInt(localStorage.getItem(chave), 10); } catch (e) {}
+    if (i == null || isNaN(i)) i = Math.floor(Math.random() * lista.length);
+
+    var botoes = document.querySelectorAll("[data-whatsapp]");
+    botoes.forEach(function (el) { el.setAttribute("href", link(i)); });
+
+    botoes.forEach(function (el) {
+      el.addEventListener("click", function () {
+        // este clique já abre o número atual; agora avança para o próximo
+        i = (i + 1) % lista.length;
+        try { localStorage.setItem(chave, i); } catch (e) {}
+        setTimeout(function () {
+          document.querySelectorAll("[data-whatsapp]").forEach(function (b) { b.setAttribute("href", link(i)); });
+        }, 100);
+      });
+    });
   }
 
   /* 5. Listas dinâmicas */
