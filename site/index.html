@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carregando…</title>
+  <link rel="icon" href="img/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ================= HEADER ================= -->
+  <header class="topo">
+    <div class="container">
+      <a href="#" class="logo">
+        <img src="img/logo.svg" data-cfg-src="empresa.logo" alt="Logo">
+        <!-- <span data-cfg="empresa.nome">Empresa</span> -->
+      </a>
+      <div class="acoes">
+        <a class="ajuda" data-cfg-href="contato.ajudaLink" href="#faq">Ajuda</a>
+        <a href="#cadastro" class="btn" style="padding:11px 22px" data-cfg="hero.botao">Participar</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= HERO (imagem de fundo de lado a lado) ================= -->
+  <section class="hero" data-hero>
+    <div class="hero-overlay"></div>
+    <div class="container">
+      <div class="hero-content">
+        <span class="eyebrow" data-cfg="hero.eyebrow">Selo</span>
+        <h1 data-cfg="hero.titulo">Título principal</h1>
+        <p data-cfg="hero.subtitulo">Subtítulo</p>
+        <a href="#cadastro" class="btn" data-cfg="hero.botao">Quero participar</a>
+      </div>
+    </div>
+    <svg class="onda" viewBox="0 0 1440 90" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path fill="#f5f5f5" d="M0,64 C240,110 480,20 720,40 C960,60 1200,110 1440,60 L1440,90 L0,90 Z"/>
+    </svg>
+  </section>
+
+  <!-- ================= CONFIANÇA ================= -->
+  <section class="confianca">
+    <div class="container">
+      <div class="grid">
+        <div class="img">
+          <img src="img/beneficio.jpg" data-cfg-src="confianca.imagem" alt="Benefício">
+        </div>
+        <div class="txt">
+          <div class="dash esq"></div>
+          <span class="eyebrow" data-cfg="confianca.eyebrow">Benefícios</span>
+          <h2 data-cfg="confianca.titulo">Benefício principal</h2>
+          <p data-cfg="confianca.texto">Texto</p>
+          <ul class="bullets" data-list="bullets"></ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SERVIÇOS ================= -->
+  <section class="servicos" id="services">
+    <div class="container">
+      <div class="cabecalho">
+        <div class="dash"></div>
+        <h2 class="secao-titulo" data-cfg="servicos.titulo">Serviços</h2>
+      </div>
+      <div class="cards" data-list="servicos"></div>
+    </div>
+  </section>
+
+  <!-- ================= SEM INVESTIR ================= -->
+  <section class="sem-investir">
+    <div class="container">
+      <div class="grid inv">
+        <div class="img">
+          <img src="img/sem-investir.jpg" data-cfg-src="semInvestir.imagem" alt="Sem investir">
+        </div>
+        <div class="txt">
+          <div class="dash esq"></div>
+          <h2 data-cfg="semInvestir.titulo">Sem investir</h2>
+          <p data-cfg="semInvestir.texto">Texto</p>
+          <a href="#cadastro" class="btn" style="margin-top:20px">Começar agora</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= REQUISITOS ================= -->
+  <section class="requisitos">
+    <div class="container">
+      <div class="cabecalho">
+        <div class="dash"></div>
+        <h2 class="secao-titulo" data-cfg="requisitos.titulo">Requisitos</h2>
+      </div>
+      <div class="req-grid" data-list="requisitos"></div>
+    </div>
+  </section>
+
+  <!-- ================= FAQ ================= -->
+  <section id="faq">
+    <div class="container">
+      <div class="cabecalho" style="text-align:center;margin-bottom:40px">
+        <div class="dash"></div>
+        <h2 class="secao-titulo">Perguntas frequentes</h2>
+      </div>
+      <div class="faq-wrap" data-list="faq"></div>
+    </div>
+  </section>
+
+  <!-- ================= FORMULÁRIO DE LEADS ================= -->
+  <section class="leads" id="cadastro">
+    <div class="container">
+      <div class="cabecalho">
+        <div class="dash"></div>
+        <h2 class="secao-titulo" data-cfg="leads.titulo">Cadastre-se</h2>
+        <p data-cfg="leads.subtitulo">Subtítulo</p>
+      </div>
+      <form class="form-lead" id="form-lead" novalidate>
+        <div data-campos></div>
+        <div class="form-acoes">
+          <button type="submit" class="btn" data-cfg="leads.botao">Enviar cadastro</button>
+          <a href="#" class="btn btn-wpp" data-whatsapp target="_blank">Enviar pelo WhatsApp</a>
+        </div>
+        <div class="form-msg" id="form-msg"></div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ================= FAIXA FINAL ================= -->
+  <section class="cta-final">
+    <svg class="onda-topo" viewBox="0 0 1440 80" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path fill="#f6f7fb" d="M0,0 C360,70 1080,70 1440,0 L1440,0 L0,0 Z"/>
+    </svg>
+    <div class="container">
+      <h2 data-cfg="ctaFinal.titulo">Junte-se a nós</h2>
+      <a href="#cadastro" class="btn" data-cfg="ctaFinal.botao">Quero me cadastrar</a>
+    </div>
+  </section>
+
+  <!-- ================= RODAPÉ ================= -->
+  <footer class="rodape">
+    <div class="container">
+      <div class="logo">
+        <img src="img/logo.svg" data-cfg-src="empresa.logo" alt="Logo" style="height:38px">
+        <!-- <span data-cfg="empresa.nome">Empresa</span> -->
+      </div>
+      <p>Contato: <a data-cfg="contato.email" href="mailto:">email</a></p>
+      <div class="rodape-base">
+        © <span data-cfg="empresa.ano">2026</span> <span data-cfg="empresa.nome">Empresa</span> — Todos os direitos reservados.
+      </div>
+    </div>
+  </footer>
+
+ <a class="whatsapp-flutuante" data-whatsapp target="_blank"
+   style="background:none;box-shadow:none;padding:0;">
+  <img src="img/WhatsApp.png" alt="Fale direto pelo WhatsApp" style="width:230px;height:auto;display:block;">
+</a>
+
+  <script src="js/config.js"></script>
+  <script src="js/script.js"></script>
+</body>
+</html>

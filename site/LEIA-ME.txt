@@ -1,0 +1,8 @@
+Coloque AQUI os arquivos da sua landing:
+  index.html, a pasta css/, a pasta js/ e a pasta img/
+
+Depois, no js/config.js da landing, use o endpoint relativo:
+  leads: { endpoint: "/api/leads", ... }
+
+Assim o site abre em  https://SEU-APP.onrender.com/
+e o painel em         https://SEU-APP.onrender.com/painel
