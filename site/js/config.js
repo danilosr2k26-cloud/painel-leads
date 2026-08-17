@@ -30,9 +30,15 @@ const CONFIG = {
 
   /* ---------- CONTATO / WHATSAPP ---------- */
   contato: {
-    whatsappNumero: "5511991236743",       // DDI+DDD+numero, só dígitos
+    whatsappNumero: "5511900000000",       // DDI+DDD+numero, só dígitos
     whatsappMensagem: "Olá! Tenho interesse em me tornar parceiro.",
     whatsappTexto: "Falar no WhatsApp",
+    whatsappNumeros: [
+      { nome: "Atendente 1", numero: "5511900000001" },
+      { nome: "Atendente 2", numero: "5511900000002" },
+      { nome: "Atendente 3", numero: "5511900000003" },
+      { nome: "Atendente 4", numero: "5511900000004" }
+    ],
     email: "contato@cliente.com.br",
     ajudaLink: "#faq"
   },
