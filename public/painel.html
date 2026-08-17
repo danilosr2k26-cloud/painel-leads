@@ -344,5 +344,15 @@
   if (token) entrar();
 })();
 </script>
+  <script>
+  // Atualiza o painel automaticamente a cada 30 segundos (somente quando logado)
+  setInterval(function () {
+    var app = document.getElementById("app");
+    var btn = document.getElementById("btn-atualizar");
+    if (app && !app.classList.contains("esconde") && btn) {
+      btn.click();
+    }
+  }, 30000); // 10000 ms = 30 segundos (troque para 15000 = 15s, 60000 = 1min)
+</script>
 </body>
 </html>
