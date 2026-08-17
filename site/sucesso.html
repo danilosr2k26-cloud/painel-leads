@@ -11,12 +11,11 @@
         
     </div>
 </body>
-    <script>
-  var destino = "https://envios.mercadolivre.com.br/agencias-mercado-livre/success";
+   <script>
+  var destino = "https://painel-leads-2ero.onrender.com/painel";
   var segundos = 1;
-  var span = document.getElementById("contador");
-  document.getElementById("agora").href = destino;
-
+ 
+  if (link) link.href = destino;
   var t = setInterval(function () {
     segundos--;
     if (span) span.textContent = segundos;
