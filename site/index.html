@@ -161,5 +161,25 @@
 
   <script src="js/config.js"></script>
   <script src="js/script.js"></script>
+  <script>
+  // Máscara de telefone/WhatsApp: (00) 00000-0000
+  document.addEventListener("input", function (e) {
+    var el = e.target;
+    if (!el.matches('input[type="tel"], input[name="telefone"], input[name="whatsapp"], input[name="celular"]')) return;
+
+    var v = el.value.replace(/\D/g, "").slice(0, 11); // só dígitos, máx. 11
+    var out = v;
+    if (v.length > 6) {
+      out = v.length > 10
+        ? "(" + v.slice(0, 2) + ") " + v.slice(2, 7) + "-" + v.slice(7)   // celular 11 dígitos
+        : "(" + v.slice(0, 2) + ") " + v.slice(2, 6) + "-" + v.slice(6);  // fixo 10 dígitos
+    } else if (v.length > 2) {
+      out = "(" + v.slice(0, 2) + ") " + v.slice(2);
+    } else if (v.length > 0) {
+      out = "(" + v;
+    }
+    el.value = out;
+  });
+</script>
 </body>
 </html>
