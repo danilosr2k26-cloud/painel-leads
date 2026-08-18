@@ -344,15 +344,43 @@
   if (token) entrar();
 })();
 </script>
-  <script>
-  // Atualiza o painel automaticamente a cada 30 segundos (somente quando logado)
-  setInterval(function () {
+  <audio id="som-lead" src="/novocliente.mp3" preload="auto"></audio>
+<script>
+(function () {
+  var som = document.getElementById("som-lead");
+  var ultimoTotal = null;
+  var INTERVALO = 10000; // de quanto em quanto tempo checa novos leads (15s)
+
+  // "Desbloqueia" o áudio no primeiro clique/tecla (regra de autoplay dos navegadores)
+  function desbloquear() {
+    som.play().then(function () { som.pause(); som.currentTime = 0; }).catch(function () {});
+    document.removeEventListener("click", desbloquear);
+    document.removeEventListener("keydown", desbloquear);
+  }
+  document.addEventListener("click", desbloquear);
+  document.addEventListener("keydown", desbloquear);
+
+  function ciclo() {
     var app = document.getElementById("app");
     var btn = document.getElementById("btn-atualizar");
-    if (app && !app.classList.contains("esconde") && btn) {
-      btn.click();
-    }
-  }, 30000); // 10000 ms = 30 segundos (troque para 15000 = 15s, 60000 = 1min)
+    if (!app || app.classList.contains("esconde")) return; // só quando logado
+    if (btn) btn.click(); // atualiza os dados do painel
+
+    // espera os dados chegarem e compara o total
+    setTimeout(function () {
+      var el = document.getElementById("k-total");
+      var n = el ? parseInt(el.textContent, 10) : NaN;
+      if (!isNaN(n)) {
+        if (ultimoTotal !== null && n > ultimoTotal) {
+          som.currentTime = 0;
+          som.play().catch(function () {});
+        }
+        ultimoTotal = n;
+      }
+    }, 1200);
+  }
+  setInterval(ciclo, INTERVALO);
+})();
 </script>
 </body>
 </html>
