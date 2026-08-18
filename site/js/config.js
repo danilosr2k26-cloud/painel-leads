@@ -34,10 +34,8 @@ const CONFIG = {
     whatsappMensagem: "Olá! Tenho interesse em me tornar parceiro.",
     whatsappTexto: "Falar no WhatsApp",
     whatsappNumeros: [
-      { nome: "Atendente 1", numero: "5511900000001" },
-      { nome: "Atendente 2", numero: "5511900000002" },
-      { nome: "Atendente 3", numero: "5511900000003" },
-      { nome: "Atendente 4", numero: "5511900000004" }
+      { nome: "Atendente 1", numero: "5511939358986" },
+      { nome: "Atendente 2", numero: "55511939358986" }
     ],
     email: "contato@cliente.com.br",
     ajudaLink: "#faq"
