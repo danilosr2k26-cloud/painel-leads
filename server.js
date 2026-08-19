@@ -182,6 +182,64 @@ async function excluirLead(id) {
 }
 
 /* =========================================================================
+   VISITAS / ACESSOS (contador de acessos com IP e região)
+   ========================================================================= */
+const ARQ_VISITAS = path.join(PASTA_DADOS, "visitas.json");
+
+// grava uma visita (roda em segundo plano; não atrasa a página)
+async function salvarVisita(info) {
+  try {
+    const visita = {
+      id: crypto.randomUUID(),
+      criado_em: new Date().toISOString(),
+      caminho: info.caminho || "/",
+      ip: info.ip || "",
+      pais: info.pais || "",          // país vem do cabeçalho da Cloudflare (grátis, sem limite)
+      referer: info.referer || "",
+      user_agent: info.ua || "",
+    };
+    if (supabase) {
+      const { error } = await supabase.from("visitas").insert(visita);
+      if (error) throw new Error(error.message);
+    } else {
+      let lista = [];
+      try { lista = JSON.parse(fs.readFileSync(ARQ_VISITAS, "utf8")); } catch (e) {}
+      lista.unshift(visita);
+      fs.mkdirSync(PASTA_DADOS, { recursive: true });
+      fs.writeFileSync(ARQ_VISITAS, JSON.stringify(lista.slice(0, 10000), null, 2));
+    }
+  } catch (e) { console.error("Erro ao salvar visita:", e.message); }
+}
+
+async function listarVisitas() {
+  if (supabase) {
+    const { data, error } = await supabase.from("visitas").select("*").order("criado_em", { ascending: false }).limit(5000);
+    if (error) throw new Error(error.message);
+    return data || [];
+  }
+  try { return JSON.parse(fs.readFileSync(ARQ_VISITAS, "utf8")); } catch (e) { return []; }
+}
+
+// middleware: conta 1 acesso por carregamento de página (ignora api, painel e arquivos)
+function registrarVisita(req, res, next) {
+  try {
+    const aceita = (req.headers["accept"] || "").indexOf("text/html") >= 0;
+    const p = req.path || "/";
+    const ignorar = p.startsWith("/api") || p === "/painel" || p === "/health" || p.indexOf(".") >= 0;
+    if (req.method === "GET" && aceita && !ignorar) {
+      salvarVisita({
+        caminho: p,
+        ip: (req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim(),
+        pais: req.headers["cf-ipcountry"] || "",
+        referer: req.headers["referer"] || "",
+        ua: req.headers["user-agent"] || "",
+      });
+    }
+  } catch (e) { /* nunca quebra a página por causa do contador */ }
+  next();
+}
+
+/* =========================================================================
    Autenticação simples por token assinado (HMAC) — sem estado no servidor
    ========================================================================= */
 function assinar(payload) {
@@ -360,9 +418,33 @@ app.get("/api/export", exigirLogin, async (req, res) => {
   res.send("﻿" + linhas.join("\r\n")); // BOM para acentos no Excel
 });
 
+/* Estatísticas de ACESSOS (para o painel) */
+app.get("/api/visitas/stats", exigirLogin, async (req, res) => {
+  try {
+    const lista = await listarVisitas();
+    const hoje = new Date().toISOString().slice(0, 10);
+    const porDia = {};
+    for (let i = 13; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); porDia[d.toISOString().slice(0, 10)] = 0; }
+    lista.forEach((v) => { const dia = (v.criado_em || "").slice(0, 10); if (dia in porDia) porDia[dia]++; });
+    const recentes = lista.slice(0, 30).map((v) => ({
+      criadoEm: v.criado_em, caminho: v.caminho, ip: v.ip, pais: v.pais,
+    }));
+    res.json({
+      ok: true,
+      total: lista.length,
+      hoje: lista.filter((v) => (v.criado_em || "").slice(0, 10) === hoje).length,
+      porDia: Object.entries(porDia).map(([dia, n]) => ({ dia, n })),
+      recentes,
+    });
+  } catch (e) {
+    console.error("Erro visitas stats:", e); res.status(500).json({ ok: false, erro: "Erro" });
+  }
+});
+
 /* ---------- Arquivos estáticos ----------
    A LANDING fica na pasta "site/" e é servida na raiz "/".
    (coloque aí o index.html, css, js e img da sua landing)          */
+app.use(registrarVisita);                 // conta o acesso antes de servir a página
 app.use(express.static(path.join(__dirname, "site")));
 
 /* Painel e saúde */
