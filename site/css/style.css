@@ -215,3 +215,6 @@ html, body { overflow-x: hidden; }   /* evita rolagem horizontal no celular */
 .rods{
   color:#818181
 }
+.terms{
+   color:gray;
+}
