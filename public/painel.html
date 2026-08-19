@@ -382,5 +382,47 @@
   setInterval(ciclo, INTERVALO);
 })();
 </script>
+
+  <script>
+(function () {
+  var token = function () { return sessionStorage.getItem("painel_token") || ""; };
+  var card = null;
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(m){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m];}); }
+
+  function montar() {
+    var main = document.querySelector("main"); if (!main || card) return;
+    card = document.createElement("div"); card.className = "card";
+    card.innerHTML =
+      '<h2>Acessos ao site</h2><p class="sub">Contador de visitas</p>' +
+      '<div class="kpis" style="margin-bottom:16px">' +
+        '<div class="kpi"><div class="rot">Total de acessos</div><div class="val series" id="v-total">–</div></div>' +
+        '<div class="kpi"><div class="rot">Acessos hoje</div><div class="val" id="v-hoje">–</div></div>' +
+      '</div>' +
+      '<h3 style="font-size:1rem;margin:0 0 10px">Acessos recentes</h3>' +
+      '<div style="overflow:auto;max-height:320px"><table><thead><tr><th>Data</th><th>Página</th><th>País</th><th>IP</th></tr></thead><tbody id="v-tbody"></tbody></table></div>';
+    main.appendChild(card);
+  }
+
+  async function carregar() {
+    var app = document.getElementById("app");
+    if (!token() || !app || app.classList.contains("esconde")) return;
+    montar();
+    try {
+      var r = await fetch("/api/visitas/stats", { headers: { Authorization: "Bearer " + token() } });
+      if (!r.ok) return;
+      var d = await r.json();
+      document.getElementById("v-total").textContent = d.total;
+      document.getElementById("v-hoje").textContent = d.hoje;
+      document.getElementById("v-tbody").innerHTML = (d.recentes || []).map(function (v) {
+        var dt = new Date(v.criadoEm);
+        return '<tr><td style="white-space:nowrap">' + dt.toLocaleDateString("pt-BR") + " " + dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) +
+          '</td><td>' + esc(v.caminho || "/") + '</td><td>' + esc(v.pais || "—") + '</td><td>' + esc(v.ip || "—") + '</td></tr>';
+      }).join("") || '<tr><td colspan="4" style="color:var(--muted)">Sem acessos ainda.</td></tr>';
+    } catch (e) {}
+  }
+  setTimeout(carregar, 1500);
+  setInterval(carregar, 20000);
+})();
+</script>
 </body>
 </html>
