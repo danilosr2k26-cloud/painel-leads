@@ -220,20 +220,31 @@ async function listarVisitas() {
   try { return JSON.parse(fs.readFileSync(ARQ_VISITAS, "utf8")); } catch (e) { return []; }
 }
 
+// de-duplicação: mesmo IP + mesma página só conta 1 vez a cada 60s
+const visitasRecentes = new Map();
+const JANELA_DEDUP = 60000;
+
 // middleware: conta 1 acesso por carregamento de página (ignora api, painel e arquivos)
 function registrarVisita(req, res, next) {
   try {
     const aceita = (req.headers["accept"] || "").indexOf("text/html") >= 0;
     const p = req.path || "/";
-    const ignorar = p.startsWith("/api") || p === "/painel" || p === "/health" || p.indexOf(".") >= 0;
+    // ignora API, QUALQUER rota do painel (com ou sem barra/parâmetro), health e arquivos
+    const ignorar = p.startsWith("/api") || p.startsWith("/painel") || p.startsWith("/health") || p.indexOf(".") >= 0;
     if (req.method === "GET" && aceita && !ignorar) {
-      salvarVisita({
-        caminho: p,
-        ip: (req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim(),
-        pais: req.headers["cf-ipcountry"] || "",
-        referer: req.headers["referer"] || "",
-        ua: req.headers["user-agent"] || "",
-      });
+      const ip = (req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+      const chave = ip + "|" + p;
+      const agora = Date.now();
+      if (agora - (visitasRecentes.get(chave) || 0) > JANELA_DEDUP) {
+        visitasRecentes.set(chave, agora);
+        if (visitasRecentes.size > 5000) visitasRecentes.clear(); // limpeza simples
+        salvarVisita({
+          caminho: p, ip,
+          pais: req.headers["cf-ipcountry"] || "",
+          referer: req.headers["referer"] || "",
+          ua: req.headers["user-agent"] || "",
+        });
+      }
     }
   } catch (e) { /* nunca quebra a página por causa do contador */ }
   next();
