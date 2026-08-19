@@ -148,9 +148,9 @@ header.topo { position: sticky; top: 0; z-index: 50; background: #fff; box-shado
 .whatsapp-flutuante:hover { background: #1da851; transform: translateY(-2px); }
 
 /* ================= RODAPÉ ================= */
-footer.rodape {background: #f5f5f5;color: #c7c9d6;padding: 46px 0 26px;text-align: center;}
-footer.rodape .logo { justify-content: center; color: #fff; margin-bottom: 14px; }
-footer.rodape a { color: #fff; }
+footer.rodape {background: #ffffff;color: #7d7d7d;padding: 46px 0 26px;text-align: center;}
+footer.rodape .logo { justify-content: center; color: #ffffff; margin-bottom: 14px; }
+footer.rodape a { color: #9f9f9f; }
 .rodape-base { border-top: 1px solid rgba(255,255,255,.12); padding-top: 20px; margin-top: 22px; font-size: .9rem; }
 
 /* ================= RESPONSIVO ================= */
@@ -216,5 +216,5 @@ html, body { overflow-x: hidden; }   /* evita rolagem horizontal no celular */
   color:#818181
 }
 .terms{
-   color:gray;
+   color: #595959;
 }
