@@ -1,478 +1,292 @@
 /* =========================================================================
-   PAINEL DE LEADS — Backend (endpoint + API do painel)
+   APP DE MATRÍCULAS — Backend (página + painel + API)
    -------------------------------------------------------------------------
-   - Recebe os leads do formulário da landing (POST /api/leads)
-   - Guarda em data/leads.json
-   - Serve o painel administrativo em /painel (com login)
-   Node.js puro + Express. Sem banco externo.
+   - Serve a página de acesso em "/" (busca a configuração da API)
+   - Recebe as matrículas em /api/matriculas (upsert por sessão)
+   - Painel em /painel: editar as configurações da página + ver matrículas
+   Node.js + Express + Supabase (com reserva em arquivo para rodar local).
    ========================================================================= */
 
 const express = require("express");
-const cors = require("cors");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const nodemailer = require("nodemailer");
 
-/* ---------- carrega variáveis do arquivo .env (sem dependência) ---------- */
-(function carregarEnv() {
+/* ---------- carrega .env (sem dependência) ---------- */
+(function () {
   try {
     const p = path.join(__dirname, ".env");
     if (!fs.existsSync(p)) return;
-    fs.readFileSync(p, "utf8").split(/\r?\n/).forEach((linha) => {
-      const m = linha.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i);
+    fs.readFileSync(p, "utf8").split(/\r?\n/).forEach((l) => {
+      const m = l.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i);
       if (m && !(m[1] in process.env)) {
         let v = m[2].trim();
         if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
         process.env[m[1]] = v;
       }
     });
-  } catch (e) { /* ignora */ }
+  } catch (e) {}
 })();
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(16).toString("hex");
-const ORIGENS = (process.env.ALLOWED_ORIGINS || "*").split(",").map((s) => s.trim());
-
-/* ---------- E-mail (backup de cada lead) ---------- */
-const SMTP_HOST = process.env.SMTP_HOST || "";
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
-const SMTP_USER = process.env.SMTP_USER || "";
-const SMTP_PASS = process.env.SMTP_PASS || "";
-const LEAD_EMAIL_TO = process.env.LEAD_EMAIL_TO || SMTP_USER;   // para onde chega o lead
-const LEAD_EMAIL_FROM = process.env.LEAD_EMAIL_FROM || SMTP_USER; // remetente
-
-let transporter = null;
-if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
-  transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_PORT === 465,       // 465 = SSL; 587 = STARTTLS
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
-  });
-  console.log("  E-mail: envio de leads ATIVO (SMTP " + SMTP_HOST + ")");
-} else {
-  console.log("  E-mail: NÃO configurado (defina SMTP_* no .env para receber leads por e-mail)");
-}
-
-/* Envia um e-mail com os dados do lead. Não trava o cadastro se falhar. */
-async function enviarEmailLead(lead) {
-  if (!transporter) return;
-  const d = lead.dados || {};
-  const linhas = Object.keys(d).map((k) => `• ${k}: ${d[k]}`).join("\n");
-  const emailLead = Object.keys(d).find((k) => /mail/i.test(k)) ? d[Object.keys(d).find((k) => /mail/i.test(k))] : "";
-  try {
-    await transporter.sendMail({
-      from: `"Novo Lead" <${LEAD_EMAIL_FROM}>`,
-      to: LEAD_EMAIL_TO,
-      replyTo: emailLead || undefined,
-      subject: "Novo lead recebido" + (lead.origem ? " — " + lead.origem : ""),
-      text:
-        "Você recebeu um novo lead:\n\n" + linhas +
-        "\n\nRecebido em: " + new Date(lead.criadoEm).toLocaleString("pt-BR") +
-        "\nOrigem: " + (lead.origem || "-"),
-    });
-  } catch (e) {
-    console.error("Falha ao enviar e-mail do lead:", e.message);
-  }
-}
-
-if (!ADMIN_PASSWORD) {
-  console.error("\n[ERRO] Defina ADMIN_PASSWORD no arquivo .env antes de iniciar.");
-  console.error("       Copie .env.example para .env e escolha uma senha.\n");
-  process.exit(1);
-}
-
-const app = express();
-app.use(express.json({ limit: "100kb" }));
-
-/* ---------- CORS: libera o POST de leads para o(s) domínio(s) da landing ---------- */
-const corsLeads = cors({
-  origin: ORIGENS.includes("*") ? true : ORIGENS,
-  methods: ["POST", "OPTIONS"],
-});
-
-/* =========================================================================
-   ARMAZENAMENTO
-   - Se SUPABASE_URL + SUPABASE_SERVICE_KEY estiverem definidos -> usa Supabase
-     (Postgres permanente).
-   - Senão -> usa o arquivo data/leads.json (bom para rodar local).
-   ========================================================================= */
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
-const TABELA = process.env.SUPABASE_TABLE || "leads";
+
+if (!ADMIN_PASSWORD) {
+  console.error("[AVISO] ADMIN_PASSWORD não definido — configure nas variáveis de ambiente.");
+  if (require.main === module) process.exit(1); // só encerra quando roda direto (local/Render)
+}
 
 let supabase = null;
 if (SUPABASE_URL && SUPABASE_KEY) {
   const { createClient } = require("@supabase/supabase-js");
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
-  console.log("  Armazenamento: SUPABASE (permanente)");
+  console.log("  Armazenamento: SUPABASE");
 } else {
-  console.log("  Armazenamento: arquivo local data/leads.json (temporário)");
+  console.log("  Armazenamento: arquivo local (temporário)");
 }
 
-/* ---- reserva em arquivo (usada quando não há Supabase) ---- */
-const PASTA_DADOS = path.join(__dirname, "data");
-const ARQUIVO = path.join(PASTA_DADOS, "leads.json");
-let filaEscrita = Promise.resolve();
-try { fs.mkdirSync(PASTA_DADOS, { recursive: true }); } catch (e) { console.error(e); }
-function lerArquivo() {
-  try { return JSON.parse(fs.readFileSync(ARQUIVO, "utf8")); } catch (e) { return []; }
-}
-function salvarArquivo(lista) {
-  filaEscrita = filaEscrita.then(() => {
-    fs.mkdirSync(PASTA_DADOS, { recursive: true });
-    return fs.promises.writeFile(ARQUIVO, JSON.stringify(lista, null, 2));
-  });
-  return filaEscrita;
+const app = express();
+app.use(express.json({ limit: "300kb" }));
+
+/* =========================================================================
+   Configuração padrão da página
+   ========================================================================= */
+const DEFAULT_CONFIG = {
+  splash: { cor: "#0a3d62", logo: "", duracao: 3000 },
+  acesso: {
+    cor: "#0a3d62", imagem: "", digitos: 6,
+    titulo: "Informe sua matrícula", corTitulo: "#ffffff",
+    corBolinha: "#ffffff", corBolinhaPreenchida: "#000000",
+    textoBotao: "Confirmar", corBotao: "#ffffff", corTextoBotao: "#0a3d62",
+    textoDica: "Toque para digitar sua matrícula",
+    corDica: "rgba(255,255,255,.75)", mostrarDica: true,
+    pedirSegunda: true,
+  },
+  acesso2: {
+    cor: "#0a3d62", imagem: "", digitos: 6,
+    titulo: "Informe a segunda matrícula", corTitulo: "#ffffff",
+    corBolinha: "#ffffff", corBolinhaPreenchida: "#000000",
+    textoBotao: "Confirmar", corBotao: "#ffffff", corTextoBotao: "#0a3d62",
+    textoDica: "Toque para digitar sua matrícula",
+    corDica: "rgba(255,255,255,.75)", mostrarDica: true,
+  },
+  telaGif: {
+    cor: "#0a3d62", imagem: "", titulo: "Aguarde um instante",
+    texto: "Estamos preparando a próxima etapa.", gif: "",
+    corTitulo: "#ffffff", corTexto: "rgba(255,255,255,.9)", duracao: 5000,
+  },
+  telaFinal: {
+    cor: "#0a3d62", imagem: "", titulo: "Tudo certo!",
+    texto: "Suas matrículas foram registradas.", gif: "",
+    corTitulo: "#ffffff", corTexto: "rgba(255,255,255,.9)",
+  },
+};
+function mesclarConfig(salvo) {
+  const out = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  if (salvo && typeof salvo === "object") {
+    for (const secao in out) {
+      if (salvo[secao] && typeof salvo[secao] === "object") Object.assign(out[secao], salvo[secao]);
+    }
+  }
+  return out;
 }
 
-/* ---- converte uma linha do banco para o formato usado pelo painel ---- */
-function mapLinha(r) {
-  return { id: r.id, criadoEm: r.criado_em, status: r.status, nota: r.nota || "", origem: r.origem || "", ip: r.ip || "", dados: r.dados || {} };
-}
+/* =========================================================================
+   Armazenamento (Supabase + reserva em arquivo)
+   ========================================================================= */
+const PASTA = path.join(__dirname, "data");
+try { fs.mkdirSync(PASTA, { recursive: true }); } catch (e) {}
+const ARQ_MAT = path.join(PASTA, "matriculas.json");
+const ARQ_CFG = path.join(PASTA, "config.json");
+const lerArq = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { return null; } };
+const salvarArq = (f, d) => { fs.mkdirSync(PASTA, { recursive: true }); fs.writeFileSync(f, JSON.stringify(d, null, 2)); };
 
-/* ---- camada de dados (funciona igual com Supabase ou arquivo) ---- */
-async function inserirLead(lead) {
+// ---- configuração ----
+async function getConfig() {
   if (supabase) {
-    const { error } = await supabase.from(TABELA).insert({
-      id: lead.id, criado_em: lead.criadoEm, status: lead.status,
-      nota: lead.nota, origem: lead.origem, ip: lead.ip, dados: lead.dados,
-    });
+    const { data } = await supabase.from("config_pagina").select("dados").eq("id", "padrao").maybeSingle();
+    return mesclarConfig(data ? data.dados : null);
+  }
+  return mesclarConfig(lerArq(ARQ_CFG));
+}
+async function saveConfig(dados) {
+  const limpo = mesclarConfig(dados);
+  if (supabase) {
+    const { error } = await supabase.from("config_pagina").upsert({ id: "padrao", dados: limpo, atualizado_em: new Date().toISOString() });
     if (error) throw new Error(error.message);
   } else {
-    const lista = lerArquivo(); lista.unshift(lead); await salvarArquivo(lista);
+    salvarArq(ARQ_CFG, limpo);
+  }
+  return limpo;
+}
+
+// ---- matrículas (upsert por id de sessão) ----
+function mapMat(r) {
+  return { id: r.id, matricula1: r.matricula1 || "", matricula2: r.matricula2 || "", concluido: !!r.concluido, criadoEm: r.criado_em, concluidoEm: r.concluido_em, ip: r.ip || "", aparelho: r.aparelho || "", userAgent: r.user_agent || "" };
+}
+
+// monta uma descrição amigável do aparelho a partir do User-Agent + modelo (client hints)
+function parseAparelho(ua, modeloCH) {
+  ua = ua || "";
+  let os = "", m;
+  if (m = ua.match(/(iPhone|iPad|iPod)[^;]*OS ([\d_]+)/)) os = "iOS " + m[2].replace(/_/g, ".");
+  else if (m = ua.match(/Android ?([\d.]+)?/)) os = "Android" + (m[1] ? " " + m[1] : "");
+  else if (/Windows NT 10/.test(ua)) os = "Windows 10/11";
+  else if (m = ua.match(/Windows NT ([\d.]+)/)) os = "Windows " + m[1];
+  else if (/Mac OS X/.test(ua)) os = "macOS";
+  else if (/Linux/.test(ua)) os = "Linux";
+
+  let modelo = (modeloCH || "").trim();
+  if (!modelo || modelo === "K") {          // "K" = Chrome esconde o modelo no UA
+    if (/iPhone/.test(ua)) modelo = "iPhone";
+    else if (/iPad/.test(ua)) modelo = "iPad";
+    else if (m = ua.match(/Android[^;]*;\s*([^;)]+?)\s+Build\//)) modelo = m[1].trim();
+    else if (m = ua.match(/Android[^;]*;\s*([^;)]+?)\)/)) modelo = m[1].trim();
+    if (modelo === "K" || modelo === "wv") modelo = "";
+  }
+  let nav = "";
+  if (/EdgA?\//.test(ua)) nav = "Edge";
+  else if (/SamsungBrowser/.test(ua)) nav = "Samsung Internet";
+  else if (/OPR\/|Opera/.test(ua)) nav = "Opera";
+  else if (/Firefox\//.test(ua)) nav = "Firefox";
+  else if (/Chrome\//.test(ua)) nav = "Chrome";
+  else if (/Safari\//.test(ua)) nav = "Safari";
+
+  return [modelo, os, nav].filter(Boolean).join(" · ") || (ua ? ua.slice(0, 60) : "");
+}
+async function salvarMatricula(id, campos) {
+  if (supabase) {
+    const { data, error } = await supabase.from("matriculas").update(campos).eq("id", id).select();
+    if (error) throw new Error(error.message);
+    if (!data || !data.length) {
+      const { error: e2 } = await supabase.from("matriculas").insert(Object.assign({ id, criado_em: new Date().toISOString() }, campos));
+      if (e2) throw new Error(e2.message);
+    }
+  } else {
+    let lista = lerArq(ARQ_MAT) || [];
+    const i = lista.findIndex((x) => x.id === id);
+    if (i >= 0) lista[i] = Object.assign(lista[i], campos);
+    else lista.unshift(Object.assign({ id, criado_em: new Date().toISOString() }, campos));
+    salvarArq(ARQ_MAT, lista);
   }
 }
-async function listarLeads() {
+async function listarMatriculas() {
   if (supabase) {
-    const { data, error } = await supabase.from(TABELA).select("*").order("criado_em", { ascending: false });
+    const { data, error } = await supabase.from("matriculas").select("*").order("criado_em", { ascending: false }).limit(5000);
     if (error) throw new Error(error.message);
-    return (data || []).map(mapLinha);
+    return (data || []).map(mapMat);
   }
-  return lerArquivo();
-}
-async function atualizarLead(id, campos) {
-  if (supabase) {
-    const { data, error } = await supabase.from(TABELA).update(campos).eq("id", id).select();
-    if (error) throw new Error(error.message);
-    return data && data[0] ? mapLinha(data[0]) : null;
-  }
-  const lista = lerArquivo();
-  const lead = lista.find((l) => l.id === id);
-  if (!lead) return null;
-  Object.assign(lead, campos);
-  await salvarArquivo(lista);
-  return lead;
-}
-async function excluirLead(id) {
-  if (supabase) {
-    const { error } = await supabase.from(TABELA).delete().eq("id", id);
-    if (error) throw new Error(error.message);
-    return true;
-  }
-  const lista = lerArquivo();
-  const antes = lista.length;
-  const nova = lista.filter((l) => l.id !== id);
-  if (nova.length === antes) return false;
-  await salvarArquivo(nova);
-  return true;
+  return (lerArq(ARQ_MAT) || []).map(mapMat);
 }
 
 /* =========================================================================
-   VISITAS / ACESSOS (contador de acessos com IP e região)
+   Autenticação (token assinado)
    ========================================================================= */
-const ARQ_VISITAS = path.join(PASTA_DADOS, "visitas.json");
-
-// grava uma visita (roda em segundo plano; não atrasa a página)
-async function salvarVisita(info) {
-  try {
-    const visita = {
-      id: crypto.randomUUID(),
-      criado_em: new Date().toISOString(),
-      caminho: info.caminho || "/",
-      ip: info.ip || "",
-      pais: info.pais || "",          // país vem do cabeçalho da Cloudflare (grátis, sem limite)
-      referer: info.referer || "",
-      user_agent: info.ua || "",
-    };
-    if (supabase) {
-      const { error } = await supabase.from("visitas").insert(visita);
-      if (error) throw new Error(error.message);
-    } else {
-      let lista = [];
-      try { lista = JSON.parse(fs.readFileSync(ARQ_VISITAS, "utf8")); } catch (e) {}
-      lista.unshift(visita);
-      fs.mkdirSync(PASTA_DADOS, { recursive: true });
-      fs.writeFileSync(ARQ_VISITAS, JSON.stringify(lista.slice(0, 10000), null, 2));
-    }
-  } catch (e) { console.error("Erro ao salvar visita:", e.message); }
+function assinar(p) {
+  const c = Buffer.from(JSON.stringify(p)).toString("base64url");
+  return c + "." + crypto.createHmac("sha256", AUTH_SECRET).update(c).digest("base64url");
 }
-
-async function listarVisitas() {
-  if (supabase) {
-    const { data, error } = await supabase.from("visitas").select("*").order("criado_em", { ascending: false }).limit(5000);
-    if (error) throw new Error(error.message);
-    return data || [];
-  }
-  try { return JSON.parse(fs.readFileSync(ARQ_VISITAS, "utf8")); } catch (e) { return []; }
-}
-
-// de-duplicação: mesmo IP + mesma página só conta 1 vez a cada 60s
-const visitasRecentes = new Map();
-const JANELA_DEDUP = 60000;
-
-// middleware: conta 1 acesso por carregamento de página (ignora api, painel e arquivos)
-function registrarVisita(req, res, next) {
-  try {
-    const aceita = (req.headers["accept"] || "").indexOf("text/html") >= 0;
-    const p = req.path || "/";
-    // ignora API, QUALQUER rota do painel (com ou sem barra/parâmetro), health e arquivos
-    const ignorar = p.startsWith("/api") || p.startsWith("/painel") || p.startsWith("/health") || p.indexOf(".") >= 0;
-    if (req.method === "GET" && aceita && !ignorar) {
-      const ip = (req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-      const chave = ip + "|" + p;
-      const agora = Date.now();
-      if (agora - (visitasRecentes.get(chave) || 0) > JANELA_DEDUP) {
-        visitasRecentes.set(chave, agora);
-        if (visitasRecentes.size > 5000) visitasRecentes.clear(); // limpeza simples
-        salvarVisita({
-          caminho: p, ip,
-          pais: req.headers["cf-ipcountry"] || "",
-          referer: req.headers["referer"] || "",
-          ua: req.headers["user-agent"] || "",
-        });
-      }
-    }
-  } catch (e) { /* nunca quebra a página por causa do contador */ }
-  next();
-}
-
-/* =========================================================================
-   Autenticação simples por token assinado (HMAC) — sem estado no servidor
-   ========================================================================= */
-function assinar(payload) {
-  const corpo = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const assinatura = crypto.createHmac("sha256", AUTH_SECRET).update(corpo).digest("base64url");
-  return corpo + "." + assinatura;
-}
-function verificar(token) {
-  if (!token || token.indexOf(".") < 0) return null;
-  const [corpo, assinatura] = token.split(".");
-  const esperada = crypto.createHmac("sha256", AUTH_SECRET).update(corpo).digest("base64url");
-  if (!crypto.timingSafeEqual(Buffer.from(assinatura), Buffer.from(esperada))) return null;
-  try {
-    const dados = JSON.parse(Buffer.from(corpo, "base64url").toString());
-    if (dados.exp && Date.now() > dados.exp) return null;
-    return dados;
-  } catch (e) { return null; }
+function verificar(t) {
+  if (!t || t.indexOf(".") < 0) return null;
+  const [c, s] = t.split(".");
+  const esp = crypto.createHmac("sha256", AUTH_SECRET).update(c).digest("base64url");
+  try { if (!crypto.timingSafeEqual(Buffer.from(s), Buffer.from(esp))) return null; } catch (e) { return null; }
+  try { const d = JSON.parse(Buffer.from(c, "base64url").toString()); if (d.exp && Date.now() > d.exp) return null; return d; } catch (e) { return null; }
 }
 function exigirLogin(req, res, next) {
   const h = req.headers.authorization || "";
-  const token = h.startsWith("Bearer ") ? h.slice(7) : "";
-  const dados = verificar(token);
-  if (!dados) return res.status(401).json({ ok: false, erro: "Não autorizado" });
-  req.usuario = dados.u;
-  next();
-}
-
-/* =========================================================================
-   Anti-spam simples: limite por IP em memória
-   ========================================================================= */
-const contadorIP = new Map();
-function limitar(req, res, next) {
-  const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-  const agora = Date.now();
-  const reg = contadorIP.get(ip) || { n: 0, t: agora };
-  if (agora - reg.t > 60000) { reg.n = 0; reg.t = agora; }
-  reg.n++;
-  contadorIP.set(ip, reg);
-  if (reg.n > 20) return res.status(429).json({ ok: false, erro: "Muitas tentativas. Tente mais tarde." });
+  const d = verificar(h.startsWith("Bearer ") ? h.slice(7) : "");
+  if (!d) return res.status(401).json({ ok: false, erro: "Não autorizado" });
   next();
 }
 
 /* =========================================================================
    ROTAS
    ========================================================================= */
-
-/* Recebe um lead (chamado pela landing). Público. */
-app.options("/api/leads", corsLeads);
-app.post("/api/leads", corsLeads, limitar, async (req, res) => {
-  try {
-    const body = req.body || {};
-
-    // honeypot: se o campo oculto vier preenchido, é bot — responde ok sem salvar
-    if (body._gotcha) return res.json({ ok: true });
-
-    // separa campos de controle dos dados do formulário
-    const { _origem, _gotcha, ...campos } = body;
-    const temAlgo = Object.values(campos).some((v) => String(v || "").trim());
-    if (!temAlgo) return res.status(400).json({ ok: false, erro: "Envio vazio" });
-
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-    const lead = {
-      id: crypto.randomUUID(),
-      criadoEm: new Date().toISOString(),
-      status: "novo",             // novo | contatado | descartado
-      nota: "",
-      origem: _origem || "",
-      ip,
-      dados: campos,
-    };
-
-    await inserirLead(lead);
-
-    // backup por e-mail (em segundo plano; não atrasa a resposta ao formulário)
-    enviarEmailLead(lead);
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("Erro ao salvar lead:", e);
-    res.status(500).json({ ok: false, erro: "Erro ao salvar o lead" });
-  }
+// config pública (a página consome)
+app.get("/api/config", async (req, res) => {
+  try { res.json({ ok: true, config: await getConfig() }); }
+  catch (e) { console.error(e); res.json({ ok: true, config: DEFAULT_CONFIG }); }
 });
 
-/* Login do painel */
+// recebe matrícula (pública)
+app.post("/api/matriculas", async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.id) return res.status(400).json({ ok: false, erro: "Sem id" });
+    const ip = (req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+    if (b.matricula2 !== undefined) {
+      await salvarMatricula(b.id, { matricula2: String(b.matricula2), concluido: true, concluido_em: new Date().toISOString() });
+    } else {
+      const ua = String(b.ua || req.headers["user-agent"] || "");
+      const campos = { matricula1: String(b.matricula1 || ""), concluido: !!b.concluir, ip,
+        user_agent: ua, aparelho: parseAparelho(ua, b.modelo) };
+      if (b.concluir) campos.concluido_em = new Date().toISOString();  // 1ª já finaliza (2ª desativada)
+      await salvarMatricula(b.id, campos);
+    }
+    res.json({ ok: true });
+  } catch (e) { console.error("Erro matrícula:", e); res.status(500).json({ ok: false, erro: "Erro ao salvar" }); }
+});
+
+// login
 app.post("/api/login", (req, res) => {
   const { usuario, senha } = req.body || {};
-  const okUser = crypto.timingSafeEqual(Buffer.from(String(usuario || "")), Buffer.from(ADMIN_USER)) ||
-                 String(usuario || "") === ADMIN_USER;
-  const okSenha = String(senha || "").length === ADMIN_PASSWORD.length &&
-                  crypto.timingSafeEqual(Buffer.from(String(senha)), Buffer.from(ADMIN_PASSWORD));
-  if (!okUser || !okSenha) return res.status(401).json({ ok: false, erro: "Usuário ou senha inválidos" });
-  const token = assinar({ u: ADMIN_USER, exp: Date.now() + 1000 * 60 * 60 * 12 }); // 12h
-  res.json({ ok: true, token, usuario: ADMIN_USER });
+  const okU = String(usuario || "") === ADMIN_USER;
+  const okS = String(senha || "").length === ADMIN_PASSWORD.length &&
+              crypto.timingSafeEqual(Buffer.from(String(senha)), Buffer.from(ADMIN_PASSWORD));
+  if (!okU || !okS) return res.status(401).json({ ok: false, erro: "Usuário ou senha inválidos" });
+  res.json({ ok: true, token: assinar({ u: ADMIN_USER, exp: Date.now() + 1000 * 60 * 60 * 12 }), usuario: ADMIN_USER });
 });
 
-/* Lista de leads com filtros */
-app.get("/api/leads", exigirLogin, async (req, res) => {
+// salvar config (admin)
+app.put("/api/config", exigirLogin, async (req, res) => {
+  try { res.json({ ok: true, config: await saveConfig(req.body || {}) }); }
+  catch (e) { console.error(e); res.status(500).json({ ok: false, erro: "Erro ao salvar config" }); }
+});
+
+// listar matrículas (admin)
+app.get("/api/matriculas", exigirLogin, async (req, res) => {
   try {
-    const { status, q, from, to } = req.query;
-    let lista = await listarLeads();
-    if (status && status !== "todos") lista = lista.filter((l) => l.status === status);
-    if (from) lista = lista.filter((l) => l.criadoEm >= from);
-    if (to) lista = lista.filter((l) => l.criadoEm <= to + "T23:59:59");
-    if (q) {
-      const t = String(q).toLowerCase();
-      lista = lista.filter((l) => JSON.stringify(l.dados).toLowerCase().includes(t));
-    }
-    res.json({ ok: true, total: lista.length, leads: lista });
-  } catch (e) {
-    console.error("Erro ao listar:", e); res.status(500).json({ ok: false, erro: "Erro ao listar" });
-  }
-});
-
-/* Estatísticas para os KPIs e o gráfico */
-app.get("/api/stats", exigirLogin, async (req, res) => {
-  try {
-  const lista = await listarLeads();
-  const hoje = new Date().toISOString().slice(0, 10);
-  const porDia = {};
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(); d.setDate(d.getDate() - i);
-    porDia[d.toISOString().slice(0, 10)] = 0;
-  }
-  lista.forEach((l) => { const d = l.criadoEm.slice(0, 10); if (d in porDia) porDia[d]++; });
-  res.json({
-    ok: true,
-    total: lista.length,
-    novos: lista.filter((l) => l.status === "novo").length,
-    contatados: lista.filter((l) => l.status === "contatado").length,
-    hoje: lista.filter((l) => l.criadoEm.slice(0, 10) === hoje).length,
-    porDia: Object.entries(porDia).map(([dia, n]) => ({ dia, n })),
-  });
-  } catch (e) {
-    console.error("Erro no stats:", e); res.status(500).json({ ok: false, erro: "Erro" });
-  }
-});
-
-/* Atualiza status/nota */
-app.patch("/api/leads/:id", exigirLogin, async (req, res) => {
-  try {
-    const campos = {};
-    if (typeof req.body.status === "string") campos.status = req.body.status;
-    if (typeof req.body.nota === "string") campos.nota = req.body.nota;
-    const lead = await atualizarLead(req.params.id, campos);
-    if (!lead) return res.status(404).json({ ok: false, erro: "Lead não encontrado" });
-    res.json({ ok: true, lead });
-  } catch (e) {
-    console.error("Erro ao atualizar:", e); res.status(500).json({ ok: false, erro: "Erro ao atualizar" });
-  }
-});
-
-/* Exclui um lead */
-app.delete("/api/leads/:id", exigirLogin, async (req, res) => {
-  try {
-    const ok = await excluirLead(req.params.id);
-    if (!ok) return res.status(404).json({ ok: false, erro: "Lead não encontrado" });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("Erro ao excluir:", e); res.status(500).json({ ok: false, erro: "Erro ao excluir" });
-  }
-});
-
-/* Exporta CSV */
-app.get("/api/export", exigirLogin, async (req, res) => {
-  const lista = await listarLeads();
-  const colunas = new Set(["criadoEm", "status", "origem"]);
-  lista.forEach((l) => Object.keys(l.dados).forEach((k) => colunas.add(k)));
-  const cols = [...colunas];
-  const escapar = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
-  const linhas = [cols.join(";")];
-  lista.forEach((l) => {
-    linhas.push(cols.map((c) => escapar(c in l ? l[c] : l.dados[c])).join(";"));
-  });
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", 'attachment; filename="leads.csv"');
-  res.send("﻿" + linhas.join("\r\n")); // BOM para acentos no Excel
-});
-
-/* Estatísticas de ACESSOS (para o painel) */
-app.get("/api/visitas/stats", exigirLogin, async (req, res) => {
-  try {
-    const lista = await listarVisitas();
+    const lista = await listarMatriculas();
     const hoje = new Date().toISOString().slice(0, 10);
-    const porDia = {};
-    for (let i = 13; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); porDia[d.toISOString().slice(0, 10)] = 0; }
-    lista.forEach((v) => { const dia = (v.criado_em || "").slice(0, 10); if (dia in porDia) porDia[dia]++; });
-    const recentes = lista.slice(0, 30).map((v) => ({
-      criadoEm: v.criado_em, caminho: v.caminho, ip: v.ip, pais: v.pais,
-    }));
     res.json({
-      ok: true,
-      total: lista.length,
-      hoje: lista.filter((v) => (v.criado_em || "").slice(0, 10) === hoje).length,
-      porDia: Object.entries(porDia).map(([dia, n]) => ({ dia, n })),
-      recentes,
+      ok: true, total: lista.length,
+      concluidas: lista.filter((m) => m.concluido).length,
+      hoje: lista.filter((m) => (m.criadoEm || "").slice(0, 10) === hoje).length,
+      matriculas: lista,
     });
-  } catch (e) {
-    console.error("Erro visitas stats:", e); res.status(500).json({ ok: false, erro: "Erro" });
-  }
+  } catch (e) { console.error(e); res.status(500).json({ ok: false, erro: "Erro" }); }
 });
 
-/* ---------- Arquivos estáticos ----------
-   A LANDING fica na pasta "site/" e é servida na raiz "/".
-   (coloque aí o index.html, css, js e img da sua landing)          */
-app.use(registrarVisita);                 // conta o acesso antes de servir a página
-app.use(express.static(path.join(__dirname, "site")));
+// exportar CSV (admin)
+app.get("/api/export", exigirLogin, async (req, res) => {
+  const lista = await listarMatriculas();
+  const esc = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+  const linhas = ["matricula1;matricula2;concluido;aparelho;criado_em;concluido_em"];
+  lista.forEach((m) => linhas.push([m.matricula1, m.matricula2, m.concluido ? "sim" : "não", m.aparelho, m.criadoEm, m.concluidoEm].map(esc).join(";")));
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="matriculas.csv"');
+  res.send("﻿" + linhas.join("\r\n"));
+});
 
-/* Painel e saúde */
+/* estáticos + páginas */
+app.use(express.static(path.join(__dirname, "site")));
 app.get("/painel", (req, res) => res.sendFile(path.join(__dirname, "public", "painel.html")));
 app.get("/health", (req, res) => res.json({ ok: true }));
-/* fallback: enquanto não houver site/index.html, "/" leva ao painel */
-app.get("/", (req, res) => res.redirect("/painel"));
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "site", "index.html")));
+app.use((err, req, res, next) => { console.error(err); if (!res.headersSent) res.status(500).json({ ok: false, erro: "Erro interno" }); });
 
-/* tratador de erros geral: nunca deixa a requisição travar sem resposta */
-app.use((err, req, res, next) => {
-  console.error("Erro não tratado:", err);
-  if (!res.headersSent) res.status(500).json({ ok: false, erro: "Erro interno" });
-});
+// roda o servidor só quando executado direto (local/Render). Na Vercel, o app é exportado.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`\n  Página:  http://localhost:${PORT}/`);
+    console.log(`  Painel:  http://localhost:${PORT}/painel`);
+    console.log(`  Usuário: ${ADMIN_USER}\n`);
+  });
+}
 
-app.listen(PORT, () => {
-  console.log(`\n  Landing:  http://localhost:${PORT}/`);
-  console.log(`  Painel:   http://localhost:${PORT}/painel`);
-  console.log(`  Endpoint: http://localhost:${PORT}/api/leads`);
-  console.log(`  Usuário:  ${ADMIN_USER}\n`);
-});
+module.exports = app;
